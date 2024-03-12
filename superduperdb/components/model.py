@@ -318,7 +318,7 @@ class Mapping:
         out = []
         for arg in self.mapping[0]:
             out.append(arg)
-        for k, v in self.mapping[1]:
+        for k, v in self.mapping[1].items():
             if k.startswith('_outputs.'):
                 k = k.split('.')[1]
             out.append(f'{k}={v}')
@@ -394,6 +394,11 @@ class _Predictor(Component):
     flatten: bool = False
     model_update_kwargs: t.Dict = dc.field(default_factory=dict)
     predict_kwargs: t.Dict = dc.field(default_factory=lambda: {})
+
+    def __post_init__(self, artifacts):
+        super().__post_init__(artifacts)
+        if not self.identifier:
+            raise Exception('_Predictor identifier must be non-empty')
 
     def post_create(self, db):
         output_component = db.databackend.create_model_table_or_collection(self)
@@ -672,6 +677,28 @@ class _Predictor(Component):
         outputs = encoded_outputs if encoded_outputs else outputs
         return outputs
 
+    def __call__(self, outputs: t.Optional[str] = None, **kwargs):
+        from superduperdb.components.graph import IndexableNode
+        parent_graph = None
+        parent_models = {}
+        for k, v in kwargs.items():
+            if parent_graph is None:
+                parent_graph = v.parent_graph
+                parent_models.update(v.parent_models)
+            elif parent_graph is not None:
+                assert v.parent_graph == parent_graph, 'Cannot include 2 parent graphs'
+            parent_graph.add_edge(v.model.identifier, self.identifier, key=k)
+            parent_models[v.model.identifier] = v
+        return IndexableNode(
+            model=self,
+            parent_graph=parent_graph,
+            parent_models=parent_models,
+            identifier=outputs,
+        )
+
+
+
+
 
 @dc.dataclass(kw_only=True)
 class _DeviceManaged:
@@ -779,6 +806,9 @@ class ObjectModel(_Predictor, _Validator):
             for i in range(len(dataset)):
                 outputs.append(self._wrapper(dataset[i]))
         return outputs
+
+    def __call__(self, *args: dc.Any, **kwds: dc.Any) -> dc.Any:
+        return super().__call__(*args, **kwds)
 
 
 Model = ObjectModel

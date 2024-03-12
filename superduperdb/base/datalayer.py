@@ -83,6 +83,7 @@ class Datalayer:
         self.metrics = LoadDict(self, field='metric')
         self.models = LoadDict(self, field='model')
         self.datatypes = LoadDict(self, field='datatype')
+        self.listeners = LoadDict(self, field='listener')
         self.vector_indices = LoadDict(self, field='vector_index')
         self.datatypes.update(serializers)
 
@@ -647,32 +648,27 @@ class Datalayer:
         listeners = self.show('listener')
         if not listeners:
             return G
-        listener_selects = {}
 
         for identifier in listeners:
             # TODO reload listener here (with lazy loading)
-            info = self.metadata.get_component('listener', identifier)
-            listener_query = Document.decode(info['dict']['select'], None)
-            listener_select = serializable.Serializable.decode(listener_query)
-            listener_selects.update({identifier: listener_select})
-            if listener_select is None:
+            listener = self.listeners[identifier]
+            if listener.select is None:
                 continue
             if (
-                listener_select.table_or_collection.identifier
+                listener.select.table_or_collection.identifier
                 != query.table_or_collection.identifier
             ):
                 continue
 
-            model, _, key = identifier.rpartition('/')
             G.add_node(
-                f'{model}.predict_in_db({key})',
+                f'{listener.model.identifier}.predict_in_db({listener.key})',
                 job=ComponentJob(
-                    component_identifier=model,
-                    args=[key],
+                    component_identifier=listener.model.identifier,
+                    args=[listener.key],
                     kwargs={
                         'ids': ids,
-                        'select': listener_query.dict().encode(),
-                        **info['dict']['predict_kwargs'],
+                        'select': listener.select.dict().encode(),
+                        **listener.predict_kwargs,
                     },
                     method_name='predict_in_db',
                     type_id='model',
@@ -680,26 +676,26 @@ class Datalayer:
             )
 
         for identifier in listeners:
-            listener_select = listener_selects[identifier]
-            if listener_select is None:
+            listener = self.listeners[identifier]
+            if listener.select is None:
                 continue
             if (
-                listener_select.table_or_collection.identifier
+                listener.select.table_or_collection.identifier
                 != query.table_or_collection.identifier
             ):
                 continue
-            model, _, key = identifier.rpartition('/')
+
             G.add_edge(
                 f'{download_content.__name__}()',
-                f'{model}.predict_in_db({key})',
+                f'{listener.model.identifier}.predict_in_db({listener.key})',
             )
             if not self.cdc.running:
                 deps = self._get_dependencies_for_listener(identifier)
                 for dep in deps:
-                    dep_model, _, dep_key = dep.rpartition('/')
+                    upstream = self.listeners[dep]
                     G.add_edge(
-                        f'{dep_model}.predict_in_db({dep_key})',
-                        f'{model}.predict_in_db({key})',
+                        f'{upstream.model.identifier}.predict_in_db({upstream.key})',
+                        f'{listener.model.identifier}.predict_in_db({listener.key})',
                     )
 
         if s.CFG.self_hosted_vector_search:
@@ -750,6 +746,24 @@ class Datalayer:
         s.logging.debug(f'{object.unique_id} already exists - doing nothing')
         return []
 
+    def _add_child_components(self, components, parent):
+        G = networkx.DiGraph()
+        lookup = {
+            f'{c.type_id}/{c.identifier}': c for c in components
+        }
+        for k in lookup:
+            G.add_node(k)
+            for d in lookup[k].dependencies:
+                G.add_edge(d, k)
+        nodes = networkx.topological_sort(G)
+        jobs = {}
+        for n in nodes:
+            component = lookup[n]
+            dependencies = sum([jobs[d] for d in component.dependencies], [])
+            tmp = self._add(component, parent=parent.unique_id, dependencies=dependencies)
+            jobs[n] = tmp
+        return sum(list(jobs.values()), [])
+
     def _add(
         self,
         object: Component,
@@ -780,10 +794,7 @@ class Datalayer:
         leaves = leaves.values()
         artifacts = [leaf for leaf in leaves if isinstance(leaf, _BaseEncodable)]
         children = [leaf for leaf in leaves if isinstance(leaf, Component)]
-
-        for child in children:
-            sub_jobs = self._add(child, parent=object.unique_id)
-            jobs.extend(sub_jobs)
+        jobs.extend(self._add_child_components(children, parent=object))
 
         # need to do this again to get the versions of the children
         serialized = object.dict().encode()
@@ -861,13 +872,12 @@ class Datalayer:
         return filter
 
     def _get_dependencies_for_listener(self, identifier):
-        info = self.metadata.get_component('listener', identifier)
-        if info is None:
+        try:
+            listener = self.listeners[identifier]
+        except exceptions.MetadataException:
             return []
         out = []
-        if info['dict']['key'].startswith('_outputs.'):
-            _, key, model, *version = info['dict']['key'].split('.')
-            out.append(f'{model}/{key}')
+        out.extend(list(listener.dependencies))
         return out
 
     # TODO should create file handler separately

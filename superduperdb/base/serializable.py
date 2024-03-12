@@ -146,12 +146,13 @@ class Variable(Serializable):
         """
         Get the intended value from the values of the global variables.
 
-        >>> Variable('number').set(db, number=1.5, other='test')
-        1.5
-
         :param db: The datalayer instance.
         :param kwargs: Variables to be used in the setter_callback
                        or as formatting variables.
+
+        >>> Variable('number').set(db, number=1.5, other='test')
+        1.5
+
         """
         if self.setter_callback is not None:
             try:

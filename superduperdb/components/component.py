@@ -46,6 +46,10 @@ class Component(Serializable, Leaf):
             raise ValueError('identifier cannot be empty or None')
         self.changed = set()
 
+    @property
+    def dependencies(self):
+        return ()
+
     def init(self):
         from superduperdb.base.document import Document
         from superduperdb.components.datatype import _BaseEncodable

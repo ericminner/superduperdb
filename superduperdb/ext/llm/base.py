@@ -5,7 +5,7 @@ import inspect
 import typing
 from functools import reduce
 from logging import WARNING, getLogger
-from typing import Any, Callable, List, Optional, Sequence, Union
+from typing import Any, Callable, List, Optional, Sequence, Union, Dict
 
 from superduperdb import logging
 from superduperdb.backends.query_dataset import QueryDataset
@@ -26,12 +26,13 @@ class _BaseLLM(_Predictor, metaclass=abc.ABCMeta):
     :param prompt_template: The template to use for the prompt.
     :param prompt_func: The function to use for the prompt.
     :param max_batch_size: The maximum batch size to use for batch generation.
-    :param predict_kwargs: Parameters used during inference.
+    :param hyper_params: Parameters used during inference.
     """
 
     prompt_template: str = "{input}"
     prompt_func: Optional[Callable] = dc.field(default=None)
     max_batch_size: Optional[int] = 4
+    hyper_params: Dict = dc.field(default_factory=dict)
 
     def __post_init__(self, artifacts):
         super().__post_init__(artifacts)
@@ -74,9 +75,9 @@ class _BaseLLM(_Predictor, metaclass=abc.ABCMeta):
 
     @ensure_initialized
     def predict(self, dataset: Union[List, QueryDataset], **kwargs) -> Sequence:
-        xs = [self.prompter(dataset[i], **kwargs) for i in range(len(dataset))]
+        xs = [self.prompter(dataset[i], **self.hyper_params) for i in range(len(dataset))]
         kwargs.pop("context", None)
-        return self._batch_generate(xs, **kwargs)
+        return self._batch_generate(xs, **self.hyper_params)
 
     def get_kwargs(self, func, *kwargs_list):
         """

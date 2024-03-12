@@ -95,8 +95,8 @@ class MongoMetaDataStore(MetaDataStore):
                     )
                 )[-1]
             else:
-                return sorted(
-                    self.component_collection.distinct(
+                def f():
+                    return self.component_collection.distinct(
                         'version',
                         {
                             '$or': [
@@ -113,7 +113,7 @@ class MongoMetaDataStore(MetaDataStore):
                             ]
                         },
                     )
-                )[-1]
+                return sorted(f())[-1]
         except IndexError:
             raise FileNotFoundError(f'Can\'t find {type_id}: {identifier} in metadata')
 
